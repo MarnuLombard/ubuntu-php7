@@ -11,6 +11,10 @@ ENV USER_GROUP_ID       1000
 # Apache
 ENV APACHE_RUN_USER     www-data
 ENV APACHE_RUN_GROUP    www-data
+# To match your local UID
+ENV APACHE_USER_ID      501
+# To match your local GID
+ENV APACHE_GROUP_ID     20
 
 # SSH
 ENV SSH_KEY_PATH        ~/.ssh/id_rsa
@@ -58,11 +62,25 @@ RUN ln -sf /usr/share/zoneinfo/Africa/Johannesburg /etc/localtime;
 # Apache
 RUN apt-get install -qy apache2;
 
+# Set up Apache user & group to match local
+# This will avoid any permission problems you may have
+# First make sure there are no users with a conflicting uid
+ENV REPLACE_USER $(awk -v val=$APACHE_USER_ID -F ":" '$3==val{print $1}' /etc/passwd)
+ENV REPLACE_GROUP $(awk -v val=$APACHE_GROUP_ID -F ":" '$3==val{print $1}' /etc/group)
+RUN if [ ${#REPLACE_USER} -ge 1 ];then usermod --uid 999 ${REPLACE_USER};fi
+RUN if [ ${#REPLACE_GROUP} -ge 1 ];then groupmod --gid 999 ${REPLACE_GROUP};fi
+
+RUN usermod --uid $APACHE_USER_ID www-data
+RUN groupmod --gid $APACHE_GROUP_ID www-data
+
 # Mysql
 RUN DEBIAN_FRONTEND=noninteractive apt-get install -qy mysql-client mysql-server libmysqlclient-dev;
 
 # Php 7
 RUN apt-get install -qy libapache2-mod-php7.0 php php-cli php-pear php-gd php-curl php-mysql php-sqlite3 php-imap php-intl php-xdebug php-imagick;
+
+# Ssh
+RUN apt-get install -qy openssh-server;
 
 # Install Composer
 RUN php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');" \
@@ -96,6 +114,18 @@ RUN echo "$USER_NAME ALL=NOPASSWD: ALL" >> /etc/sudoers
 EXPOSE 3306
 EXPOSE 80
 EXPOSE 22
+
+# Run mysql and apache on startup
+RUN update-rc.d mysql defaults
+RUN update-rc.d apache2 defaults
+RUN update-rc.d ssh defaults
+
+# Add ssh key to authorised_keys
+# TODO: Fix $SSH_KEY_PATH and use as $SSH_KEY_NAME
+ADD id_rsa.pub /tmp/id_rsa.pub
+RUN mkdir /home/$USER_NAME/.ssh
+RUN cat /tmp/id_rsa.pub | echo >> /home/$USER_NAME/.ssh/authorised_keys
+RUN chmod 700 -R /home/$USER_NAME/.ssh
 
 # Create volumes
 VOLUME /conf
